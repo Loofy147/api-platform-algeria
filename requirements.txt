@@ -16,15 +16,15 @@ hiredis==2.2.3
 # Authentication & Security
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
-python-multipart==0.0.6
+python-multipart==0.0.18
 PyJWT==2.8.1
 
 # API Documentation
-python-multipart==0.0.6
+python-multipart==0.0.18
 
 # Utilities
 python-dotenv==1.0.0
-requests==2.31.0
+requests==2.32.4
 httpx==0.25.2
 
 # Logging & Monitoring
@@ -37,10 +37,10 @@ pytest-cov==4.1.0
 httpx==0.25.2
 
 # Code Quality
-black==23.12.0
+black==24.3.0
 flake8==6.1.0
 mypy==1.7.1
 isort==5.13.2
 
 # Production
-gunicorn==21.2.0
+gunicorn==22.0.0
