@@ -30,6 +30,12 @@ async def db_session() -> AsyncSession:
 
     # Yield a session to the test
     async with TestingSessionLocal() as session:
+        # Create a mock tenant
+        tenant_id = UUID("00000000-0000-0000-0000-000000000001")
+        mock_tenant = Tenant(id=tenant_id, name="Test Tenant", slug="test-tenant")
+        session.add(mock_tenant)
+        await session.commit()
+
         yield session
 
     # Drop all tables after the test
@@ -44,7 +50,7 @@ async def test_create_and_get_product(db_session: AsyncSession):
     """
     product_repo = ProductRepository()
 
-    tenant_id = uuid4()
+    tenant_id = UUID("00000000-0000-0000-0000-000000000001")
     product_data = {
         "sku": "TEST-001",
         "name": "Test Product",
@@ -74,7 +80,7 @@ async def test_get_all_products_for_tenant(db_session: AsyncSession):
     """
     product_repo = ProductRepository()
 
-    tenant_id = uuid4()
+    tenant_id = UUID("00000000-0000-0000-0000-000000000001")
 
     # Create a couple of products for the tenant
     await product_repo.create(db_session, data={
@@ -85,8 +91,11 @@ async def test_get_all_products_for_tenant(db_session: AsyncSession):
     })
 
     # Create a product for another tenant to ensure it's not retrieved
+    other_tenant = Tenant(id=uuid4(), name="Other Tenant", slug="other-tenant")
+    db_session.add(other_tenant)
+    await db_session.commit()
     await product_repo.create(db_session, data={
-        "sku": "TENANT-B-001", "name": "Product B1", "base_price": 30.0, "sale_price": 35.0, "tenant_id": uuid4()
+        "sku": "TENANT-B-001", "name": "Product B1", "base_price": 30.0, "sale_price": 35.0, "tenant_id": other_tenant.id
     })
 
     # Retrieve all products for the tenant

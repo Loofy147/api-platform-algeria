@@ -4,12 +4,7 @@ from typing import Any, Dict, Generic, List, Optional, Type, TypeVar
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy.orm import declarative_base
-
-# This is a placeholder for the actual declarative base from the models.
-# It allows this file to be syntactically correct on its own.
-# In a real application, you would import the Base from your models package.
-Base = declarative_base()
+from core.database import Base
 ModelType = TypeVar("ModelType", bound=Base)
 
 
@@ -88,18 +83,12 @@ class BaseRepository(Generic[ModelType]):
         await db.refresh(db_obj)
         return db_obj
 
-    async def delete(self, db: AsyncSession, *, item_id: Any) -> bool:
+    async def delete(self, db: AsyncSession, *, db_obj: ModelType) -> None:
         """
         Deletes an item from the database.
 
         :param db: The async database session.
-        :param item_id: The ID of the item to delete.
-        :return: True if the item was deleted, False otherwise.
+        :param db_obj: The database object to delete.
         """
-        obj = await self.get_by_id(db, item_id)
-        if not obj:
-            return False
-
-        await db.delete(obj)
+        await db.delete(db_obj)
         await db.flush()
-        return True

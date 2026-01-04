@@ -6,12 +6,15 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.database import get_db
+from core.dependencies import get_tenant_id
 from models.business import Product
 from repositories.product_repository import ProductRepository
 from schemas.product import ProductCreate, ProductRead, ProductUpdate
 
 router = APIRouter()
-product_repo = ProductRepository()
+
+def get_product_repo():
+    return ProductRepository()
 
 
 @router.post(
@@ -23,9 +26,8 @@ product_repo = ProductRepository()
 async def create_product(
     product_in: ProductCreate,
     db: AsyncSession = Depends(get_db),
-    # In a real app, you would get the tenant_id from the authenticated user.
-    # For now, we'll pass it as a parameter for simplicity.
-    tenant_id: UUID,
+    tenant_id: UUID = Depends(get_tenant_id),
+    product_repo: ProductRepository = Depends(get_product_repo),
 ):
     """
     Creates a new product within the context of a specific tenant.
@@ -52,9 +54,10 @@ async def create_product(
 )
 async def get_all_products(
     db: AsyncSession = Depends(get_db),
-    tenant_id: UUID,
+    tenant_id: UUID = Depends(get_tenant_id),
     skip: int = 0,
     limit: int = 100,
+    product_repo: ProductRepository = Depends(get_product_repo),
 ):
     """
     Retrieves a list of all products belonging to a specific tenant.
@@ -71,11 +74,15 @@ async def get_all_products(
 async def get_product(
     product_id: UUID,
     db: AsyncSession = Depends(get_db),
+    tenant_id: UUID = Depends(get_tenant_id),
+    product_repo: ProductRepository = Depends(get_product_repo),
 ):
     """
-    Retrieves a single product by its unique ID.
+    Retrieves a single product by its unique ID, ensuring it belongs to the correct tenant.
     """
-    product = await product_repo.get_by_id(db, item_id=product_id)
+    product = await product_repo.get_by_id_and_tenant(
+        db, item_id=product_id, tenant_id=tenant_id
+    )
     if not product:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -93,18 +100,24 @@ async def update_product(
     product_id: UUID,
     product_in: ProductUpdate,
     db: AsyncSession = Depends(get_db),
+    tenant_id: UUID = Depends(get_tenant_id),
+    product_repo: ProductRepository = Depends(get_product_repo),
 ):
     """
-    Updates the details of an existing product.
+    Updates the details of an existing product, ensuring it belongs to the correct tenant.
     """
-    product = await product_repo.get_by_id(db, item_id=product_id)
+    product = await product_repo.get_by_id_and_tenant(
+        db, item_id=product_id, tenant_id=tenant_id
+    )
     if not product:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Product not found.",
         )
 
-    updated_product = await product_repo.update(db, db_obj=product, data=product_in.dict(exclude_unset=True))
+    updated_product = await product_repo.update(
+        db, db_obj=product, data=product_in.dict(exclude_unset=True)
+    )
     return updated_product
 
 
@@ -116,14 +129,20 @@ async def update_product(
 async def delete_product(
     product_id: UUID,
     db: AsyncSession = Depends(get_db),
+    tenant_id: UUID = Depends(get_tenant_id),
+    product_repo: ProductRepository = Depends(get_product_repo),
 ):
     """
-    Deletes a product from the database.
+    Deletes a product from the database, ensuring it belongs to the correct tenant.
     """
-    deleted = await product_repo.delete(db, item_id=product_id)
-    if not deleted:
+    product = await product_repo.get_by_id_and_tenant(
+        db, item_id=product_id, tenant_id=tenant_id
+    )
+    if not product:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Product not found.",
         )
+
+    await product_repo.delete(db, db_obj=product)
     return
