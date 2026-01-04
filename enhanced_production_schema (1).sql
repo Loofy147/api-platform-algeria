@@ -710,3 +710,32 @@ ALTER TABLE stock_movements SET (
 -- ============================================================================
 -- END OF SCHEMA
 -- ============================================================================
+-- ============================================================================
+-- WEBHOOKS (for integrations)
+-- ============================================================================
+
+CREATE TABLE webhooks (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    target_url TEXT NOT NULL,
+    event_types TEXT[] NOT NULL,
+    secret_encrypted BYTEA NOT NULL, -- Encrypted with pgcrypto
+    is_active BOOLEAN DEFAULT TRUE,
+    last_failure_at TIMESTAMPTZ,
+    failure_count INT DEFAULT 0,
+    created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+);
+
+-- Indexes
+CREATE INDEX idx_webhooks_org ON webhooks(organization_id) WHERE is_active = TRUE;
+CREATE INDEX idx_webhooks_events ON webhooks USING gin(event_types);
+
+-- RLS
+ALTER TABLE webhooks ENABLE ROW LEVEL SECURITY;
+CREATE POLICY tenant_isolation ON webhooks FOR ALL TO PUBLIC
+    USING (organization_id = current_tenant_id() OR is_superadmin());
+
+-- Trigger for updated_at
+CREATE TRIGGER update_webhooks_timestamp BEFORE UPDATE ON webhooks
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
