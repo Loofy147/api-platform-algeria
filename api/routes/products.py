@@ -143,6 +143,5 @@ async def delete_product(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Product not found.",
         )
-
     await product_repo.delete(db, db_obj=product)
     return

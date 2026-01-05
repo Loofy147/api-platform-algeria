@@ -14,7 +14,7 @@ from config import settings
 from core.database import init_db
 from core.cache import init_cache
 from core.middleware import RequestLoggingMiddleware, ErrorHandlingMiddleware
-from api.routes import health, auth, users, tenants, products, customers
+from api.routes import health, auth, users, tenants, products, customers, invoices
 
 # Configure logging
 logging.basicConfig(
@@ -84,6 +84,7 @@ app.include_router(users.router, prefix="/api/v1/users", tags=["Users"])
 app.include_router(tenants.router, prefix="/api/v1/tenants", tags=["Tenants"])
 app.include_router(products.router, prefix="/api/v1/products", tags=["Products"])
 app.include_router(customers.router, prefix="/api/v1/customers", tags=["Customers"])
+app.include_router(invoices.router, prefix="/api/v1/invoices", tags=["Invoices"])
 
 
 # Root endpoint

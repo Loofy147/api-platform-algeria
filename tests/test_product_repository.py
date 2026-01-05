@@ -1,47 +1,13 @@
 # tests/test_product_repository.py
 import pytest
-import pytest_asyncio
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
-from sqlalchemy.orm import sessionmaker
-from uuid import uuid4
+from sqlalchemy.ext.asyncio import AsyncSession
 
 # Important: Import all models so that Base.metadata is populated
+from uuid import UUID, uuid4
 from models.core import Tenant, User
 from models.business import Product, Customer, Invoice, InvoiceItem
 from core.database import Base
 from repositories.product_repository import ProductRepository
-
-# Use an in-memory SQLite database for testing
-DATABASE_URL = "sqlite+aiosqlite:///:memory:"
-
-engine = create_async_engine(DATABASE_URL)
-TestingSessionLocal = sessionmaker(
-    autocommit=False, autoflush=False, bind=engine, class_=AsyncSession
-)
-
-@pytest_asyncio.fixture(scope="function")
-async def db_session() -> AsyncSession:
-    """
-    Fixture to provide a clean database session for each test function.
-    """
-    # Create all tables
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
-    # Yield a session to the test
-    async with TestingSessionLocal() as session:
-        # Create a mock tenant
-        tenant_id = UUID("00000000-0000-0000-0000-000000000001")
-        mock_tenant = Tenant(id=tenant_id, name="Test Tenant", slug="test-tenant")
-        session.add(mock_tenant)
-        await session.commit()
-
-        yield session
-
-    # Drop all tables after the test
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
-
 
 @pytest.mark.asyncio
 async def test_create_and_get_product(db_session: AsyncSession):

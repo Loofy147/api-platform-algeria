@@ -148,6 +148,5 @@ async def delete_customer(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Customer not found.",
         )
-
     await customer_repo.delete(db, db_obj=customer)
     return
