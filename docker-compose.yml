@@ -1,28 +1,51 @@
-version: '3.8'
+version: '3.9'
 
 services:
-  # PostgreSQL Database
+  # PostgreSQL with TimescaleDB
   postgres:
-    image: postgres:15-alpine
-    container_name: api_platform_postgres
+    image: timescale/timescaledb:latest-pg16
+    container_name: business-os-postgres
     environment:
-      POSTGRES_USER: api_user
-      POSTGRES_PASSWORD: api_password
-      POSTGRES_DB: api_platform
+      POSTGRES_DB: business_os
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_INITDB_ARGS: '-E UTF8 --locale=C'
     ports:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./infrastructure/config/postgresql.conf:/etc/postgresql/postgresql.conf
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U api_user"]
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - business-os-network
 
-  # Redis Cache
+  # PgBouncer for connection pooling
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    container_name: business-os-pgbouncer
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/business_os
+      POOL_MODE: transaction
+      MAX_CLIENT_CONN: 1000
+      DEFAULT_POOL_SIZE: 25
+    ports:
+      - "6432:5432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - business-os-network
+
+  # Redis
   redis:
     image: redis:7-alpine
-    container_name: api_platform_redis
+    container_name: business-os-redis
+    command: redis-server --appendonly yes --maxmemory 512mb --maxmemory-policy allkeys-lru
     ports:
       - "6379:6379"
     volumes:
@@ -32,32 +55,52 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - business-os-network
 
-  # FastAPI Application
-  api:
-    build: .
-    container_name: api_platform_app
+  # MinIO (S3-compatible storage)
+  minio:
+    image: minio/minio:latest
+    container_name: business-os-minio
+    command: server /data --console-address ":9001"
     environment:
-      DATABASE_URL: postgresql://api_user:api_password@postgres:5432/api_platform
-      REDIS_URL: redis://redis:6379/0
-      ENVIRONMENT: development
-      DEBUG: "True"
-      SECRET_KEY: dev-secret-key-change-in-production
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
     ports:
-      - "8000:8000"
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
+      - "9000:9000"
+      - "9001:9001"
     volumes:
-      - .:/app
-    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+    networks:
+      - business-os-network
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: business-os-api
+    ports:
+      - "3000:3000"
+    depends_on:
+      - postgres
+      - redis
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/business_os
+      - REDIS_URL=redis://redis:6379
+      - NODE_ENV=development
+    networks:
+      - business-os-network
+
+networks:
+  business-os-network:
+    driver: bridge
 
 volumes:
   postgres_data:
   redis_data:
-
-networks:
-  default:
-    name: api_platform_network
+  minio_data:
