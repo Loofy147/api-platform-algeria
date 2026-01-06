@@ -2,7 +2,7 @@
 Core database models for multi-tenancy, users, and roles.
 """
 
-from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Table, JSON, Enum
+from sqlalchemy import Column, String, Boolean, DateTime, ForeignKey, Table, JSON, Enum, Integer, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import UUID
 import uuid
@@ -146,3 +146,19 @@ class TenantModule(Base):
 
     def __repr__(self):
         return f"<TenantModule(tenant_id='{self.tenant_id}', module_id='{self.module_id}')>"
+
+
+class TenantSequence(Base):
+    """
+    Tracks the last used value for a named sequence for each tenant.
+    """
+    __tablename__ = "tenant_sequences"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id = Column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False)
+    name = Column(String(50), nullable=False)
+    last_value = Column(Integer, nullable=False, default=0)
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "name", name="uq_tenant_sequence_name"),
+    )

@@ -55,7 +55,8 @@ CREATE DOMAIN currency_code AS CHAR(3)
 -- ============================================================================
 
 -- Organizations (Multi-tenant Root)
-CREATE TABLE organizations (
+-- Tenants (Multi-tenant Root)
+CREATE TABLE tenants (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name VARCHAR(255) NOT NULL,
     slug VARCHAR(100) UNIQUE NOT NULL,
@@ -106,15 +107,15 @@ CREATE TABLE organizations (
 ) WITH (fillfactor = 90); -- Leave room for updates
 
 -- Indexes
-CREATE INDEX idx_organizations_slug ON organizations(slug) WHERE deleted_at IS NULL;
-CREATE INDEX idx_organizations_subscription ON organizations(subscription_tier, subscription_status) WHERE deleted_at IS NULL;
-CREATE INDEX idx_organizations_search ON organizations USING gin(search_vector);
-CREATE INDEX idx_organizations_created_at ON organizations(created_at DESC);
+CREATE INDEX idx_tenants_slug ON tenants(slug) WHERE deleted_at IS NULL;
+CREATE INDEX idx_tenants_subscription ON tenants(subscription_tier, subscription_status) WHERE deleted_at IS NULL;
+CREATE INDEX idx_tenants_search ON tenants USING gin(search_vector);
+CREATE INDEX idx_tenants_created_at ON tenants(created_at DESC);
 
 -- Row Level Security
-ALTER TABLE organizations ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tenants ENABLE ROW LEVEL SECURITY;
 
-CREATE POLICY tenant_isolation ON organizations
+CREATE POLICY tenant_isolation ON tenants
     FOR ALL
     TO PUBLIC
     USING (id = current_tenant_id() OR is_superadmin());
@@ -177,7 +178,7 @@ CREATE INDEX idx_users_last_login ON users(last_login_at DESC);
 
 CREATE TABLE organization_members (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     
     -- Role-based access
@@ -200,22 +201,22 @@ CREATE TABLE organization_members (
     
     created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
     
-    UNIQUE(organization_id, user_id),
+    UNIQUE(tenant_id, user_id),
     
     CONSTRAINT valid_role CHECK (role IN ('owner','admin','manager','supervisor','staff','viewer'))
 ) WITH (fillfactor = 90);
 
 -- Indexes
-CREATE INDEX idx_org_members_org ON organization_members(organization_id) WHERE is_active = TRUE;
+CREATE INDEX idx_org_members_org ON organization_members(tenant_id) WHERE is_active = TRUE;
 CREATE INDEX idx_org_members_user ON organization_members(user_id) WHERE is_active = TRUE;
-CREATE INDEX idx_org_members_role ON organization_members(organization_id, role);
+CREATE INDEX idx_org_members_role ON organization_members(tenant_id, role);
 
 -- RLS
 ALTER TABLE organization_members ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY tenant_isolation ON organization_members
     FOR ALL TO PUBLIC
-    USING (organization_id = current_tenant_id() OR is_superadmin());
+    USING (tenant_id = current_tenant_id() OR is_superadmin());
 
 -- ============================================================================
 -- LOCATIONS (Multi-branch Support)
@@ -223,7 +224,7 @@ CREATE POLICY tenant_isolation ON organization_members
 
 CREATE TABLE locations (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     
     name VARCHAR(255) NOT NULL,
     code VARCHAR(20), -- Short code for internal use
@@ -251,19 +252,19 @@ CREATE TABLE locations (
     updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
     deleted_at TIMESTAMPTZ,
     
-    UNIQUE(organization_id, code)
+    UNIQUE(tenant_id, code)
 ) WITH (fillfactor = 90);
 
 -- Indexes
-CREATE INDEX idx_locations_org ON locations(organization_id) WHERE deleted_at IS NULL;
-CREATE INDEX idx_locations_active ON locations(organization_id, is_active) WHERE is_active = TRUE;
+CREATE INDEX idx_locations_org ON locations(tenant_id) WHERE deleted_at IS NULL;
+CREATE INDEX idx_locations_active ON locations(tenant_id, is_active) WHERE is_active = TRUE;
 CREATE INDEX idx_locations_geo ON locations USING gist(ll_to_earth(latitude, longitude)) 
     WHERE latitude IS NOT NULL AND longitude IS NOT NULL; -- Geospatial queries
 
 -- RLS
 ALTER TABLE locations ENABLE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation ON locations FOR ALL TO PUBLIC
-    USING (organization_id = current_tenant_id() OR is_superadmin());
+    USING (tenant_id = current_tenant_id() OR is_superadmin());
 
 -- ============================================================================
 -- PRODUCTS (with Advanced Search)
@@ -271,7 +272,7 @@ CREATE POLICY tenant_isolation ON locations FOR ALL TO PUBLIC
 
 CREATE TABLE products (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     category_id UUID,
     
     -- Identification
@@ -340,36 +341,36 @@ CREATE TABLE products (
     
     metadata JSONB DEFAULT '{}'::jsonb,
     
-    UNIQUE(organization_id, sku),
-    UNIQUE(organization_id, barcode)
+    UNIQUE(tenant_id, sku),
+    UNIQUE(tenant_id, barcode)
 ) WITH (fillfactor = 85); -- More updates expected
 
 -- Advanced indexes
-CREATE INDEX idx_products_org ON products(organization_id) WHERE deleted_at IS NULL;
+CREATE INDEX idx_products_org ON products(tenant_id) WHERE deleted_at IS NULL;
 CREATE INDEX idx_products_barcode ON products(barcode) WHERE barcode IS NOT NULL AND deleted_at IS NULL;
-CREATE INDEX idx_products_active ON products(organization_id, is_active) WHERE is_active = TRUE;
+CREATE INDEX idx_products_active ON products(tenant_id, is_active) WHERE is_active = TRUE;
 CREATE INDEX idx_products_search ON products USING gin(search_vector);
 CREATE INDEX idx_products_category ON products(category_id) WHERE category_id IS NOT NULL;
 
 -- Partial index for low stock (highly selective)
-CREATE INDEX idx_products_low_stock ON products(organization_id, reorder_level)
+CREATE INDEX idx_products_low_stock ON products(tenant_id, reorder_level)
     WHERE track_inventory = TRUE AND is_active = TRUE;
 
 -- Expression index for price sorting
-CREATE INDEX idx_products_price ON products(organization_id, sell_price) WHERE deleted_at IS NULL;
+CREATE INDEX idx_products_price ON products(tenant_id, sell_price) WHERE deleted_at IS NULL;
 
 -- RLS
 ALTER TABLE products ENABLE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation ON products FOR ALL TO PUBLIC
-    USING (organization_id = current_tenant_id() OR is_superadmin());
+    USING (tenant_id = current_tenant_id() OR is_superadmin());
 
 -- ============================================================================
--- SALES (PARTITIONED by organization_id + date for massive scale)
+-- SALES (PARTITIONED by tenant_id + date for massive scale)
 -- ============================================================================
 
 CREATE TABLE sales (
     id UUID NOT NULL DEFAULT uuid_generate_v4(),
-    organization_id UUID NOT NULL,
+    tenant_id UUID NOT NULL,
     location_id UUID NOT NULL,
     
     -- Sale identification
@@ -418,7 +419,7 @@ CREATE TABLE sales (
     metadata JSONB DEFAULT '{}'::jsonb,
     
     -- Primary key includes partition key
-    PRIMARY KEY (organization_id, sale_date, id),
+    PRIMARY KEY (tenant_id, sale_date, id),
     
     CONSTRAINT valid_payment_method CHECK (payment_method IN ('cash','card','bank_transfer','cheque','credit','multiple')),
     CONSTRAINT valid_status CHECK (status IN ('draft','completed','voided','refunded'))
@@ -437,10 +438,10 @@ SELECT partman.create_parent(
 );
 
 -- Indexes on partitioned table
-CREATE INDEX idx_sales_org_date ON sales(organization_id, sale_date DESC, id);
+CREATE INDEX idx_sales_org_date ON sales(tenant_id, sale_date DESC, id);
 CREATE INDEX idx_sales_location ON sales(location_id, sale_date DESC);
 CREATE INDEX idx_sales_completed_by ON sales(completed_by, sale_date DESC);
-CREATE INDEX idx_sales_status ON sales(organization_id, status) WHERE status != 'completed';
+CREATE INDEX idx_sales_status ON sales(tenant_id, status) WHERE status != 'completed';
 CREATE INDEX idx_sales_shift ON sales(shift_id) WHERE shift_id IS NOT NULL;
 CREATE INDEX idx_sales_customer ON sales(customer_id) WHERE customer_id IS NOT NULL;
 
@@ -450,7 +451,7 @@ CREATE INDEX idx_sales_date_brin ON sales USING brin(sale_date) WITH (pages_per_
 -- RLS
 ALTER TABLE sales ENABLE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation ON sales FOR ALL TO PUBLIC
-    USING (organization_id = current_tenant_id() OR is_superadmin());
+    USING (tenant_id = current_tenant_id() OR is_superadmin());
 
 -- ============================================================================
 -- SALE ITEMS (Optimized for fast inserts)
@@ -459,7 +460,7 @@ CREATE POLICY tenant_isolation ON sales FOR ALL TO PUBLIC
 CREATE TABLE sale_items (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     sale_id UUID NOT NULL,
-    organization_id UUID NOT NULL, -- For RLS
+    tenant_id UUID NOT NULL, -- For RLS
     product_id UUID NOT NULL,
     variant_id UUID,
     
@@ -495,13 +496,13 @@ CREATE INDEX idx_sale_items_sale ON sale_items(sale_id);
 CREATE INDEX idx_sale_items_product ON sale_items(product_id, created_at DESC);
 
 -- Covering index for common query pattern
-CREATE INDEX idx_sale_items_analytics ON sale_items(organization_id, created_at DESC)
+CREATE INDEX idx_sale_items_analytics ON sale_items(tenant_id, created_at DESC)
     INCLUDE (product_id, quantity, line_total, profit);
 
 -- RLS
 ALTER TABLE sale_items ENABLE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation ON sale_items FOR ALL TO PUBLIC
-    USING (organization_id = current_tenant_id() OR is_superadmin());
+    USING (tenant_id = current_tenant_id() OR is_superadmin());
 
 -- ============================================================================
 -- STOCK LEVELS (Real-time inventory)
@@ -509,7 +510,7 @@ CREATE POLICY tenant_isolation ON sale_items FOR ALL TO PUBLIC
 
 CREATE TABLE stock_levels (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    organization_id UUID NOT NULL,
+    tenant_id UUID NOT NULL,
     location_id UUID NOT NULL,
     product_id UUID NOT NULL,
     variant_id UUID,
@@ -540,13 +541,13 @@ CREATE INDEX idx_stock_levels_location ON stock_levels(location_id, product_id);
 CREATE INDEX idx_stock_levels_product ON stock_levels(product_id);
 
 -- Alert index (low stock)
-CREATE INDEX idx_stock_levels_low_stock ON stock_levels(organization_id, quantity_available)
+CREATE INDEX idx_stock_levels_low_stock ON stock_levels(tenant_id, quantity_available)
     WHERE quantity_available < 10;
 
 -- RLS
 ALTER TABLE stock_levels ENABLE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation ON stock_levels FOR ALL TO PUBLIC
-    USING (organization_id = current_tenant_id() OR is_superadmin());
+    USING (tenant_id = current_tenant_id() OR is_superadmin());
 
 -- ============================================================================
 -- STOCK MOVEMENTS (Immutable Audit Trail - Time-Series Optimized)
@@ -554,7 +555,7 @@ CREATE POLICY tenant_isolation ON stock_levels FOR ALL TO PUBLIC
 
 CREATE TABLE stock_movements (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    organization_id UUID NOT NULL,
+    tenant_id UUID NOT NULL,
     location_id UUID NOT NULL,
     product_id UUID NOT NULL,
     variant_id UUID,
@@ -587,7 +588,7 @@ CREATE TABLE stock_movements (
 -- Time-series optimized indexes
 CREATE INDEX idx_stock_movements_location ON stock_movements(location_id, created_at DESC);
 CREATE INDEX idx_stock_movements_product ON stock_movements(product_id, created_at DESC);
-CREATE INDEX idx_stock_movements_type ON stock_movements(organization_id, movement_type, created_at DESC);
+CREATE INDEX idx_stock_movements_type ON stock_movements(tenant_id, movement_type, created_at DESC);
 CREATE INDEX idx_stock_movements_reference ON stock_movements(reference_type, reference_id);
 
 -- BRIN for time-series
@@ -597,7 +598,7 @@ CREATE INDEX idx_stock_movements_time_brin ON stock_movements USING brin(created
 -- RLS
 ALTER TABLE stock_movements ENABLE ROW LEVEL SECURITY;
 CREATE POLICY tenant_isolation ON stock_movements FOR ALL TO PUBLIC
-    USING (organization_id = current_tenant_id() OR is_superadmin());
+    USING (tenant_id = current_tenant_id() OR is_superadmin());
 
 -- ============================================================================
 -- OPTIMIZED MATERIALIZED VIEWS FOR ANALYTICS
@@ -606,7 +607,7 @@ CREATE POLICY tenant_isolation ON stock_movements FOR ALL TO PUBLIC
 -- Top Products (Refreshed daily)
 CREATE MATERIALIZED VIEW mv_top_products AS
 SELECT 
-    p.organization_id,
+    p.tenant_id,
     p.id as product_id,
     p.name as product_name,
     p.sell_price,
@@ -619,9 +620,9 @@ SELECT
 FROM products p
 JOIN sale_items si ON p.id = si.product_id
 WHERE si.created_at >= NOW() - INTERVAL '30 days'
-GROUP BY p.organization_id, p.id, p.name, p.sell_price, DATE_TRUNC('day', si.created_at);
+GROUP BY p.tenant_id, p.id, p.name, p.sell_price, DATE_TRUNC('day', si.created_at);
 
-CREATE UNIQUE INDEX idx_mv_top_products ON mv_top_products(organization_id, product_id, date);
+CREATE UNIQUE INDEX idx_mv_top_products ON mv_top_products(tenant_id, product_id, date);
 CREATE INDEX idx_mv_top_products_date ON mv_top_products(date DESC);
 
 -- Auto-refresh (scheduled job)
@@ -648,7 +649,7 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Apply to all tables with updated_at
-CREATE TRIGGER update_organizations_timestamp BEFORE UPDATE ON organizations
+CREATE TRIGGER update_tenants_timestamp BEFORE UPDATE ON tenants
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
 CREATE TRIGGER update_users_timestamp BEFORE UPDATE ON users
@@ -673,7 +674,7 @@ ALTER TABLE sales ALTER COLUMN completed_at SET STATISTICS 1000;
 ALTER TABLE stock_movements ALTER COLUMN created_at SET STATISTICS 1000;
 
 -- Analyze tables for query planner
-ANALYZE organizations;
+ANALYZE tenants;
 ANALYZE users;
 ANALYZE products;
 ANALYZE sales;
@@ -685,7 +686,7 @@ ANALYZE stock_movements;
 -- COMMENTS (Documentation)
 -- ============================================================================
 
-COMMENT ON TABLE organizations IS 'Multi-tenant root - each business/merchant';
+COMMENT ON TABLE tenants IS 'Multi-tenant root - each business/merchant';
 COMMENT ON TABLE users IS 'Global users table - not tenant-specific';
 COMMENT ON TABLE sales IS 'Partitioned sales table for massive scale (millions of records)';
 COMMENT ON TABLE stock_movements IS 'Immutable audit trail - never updated, optimized for time-series';
@@ -710,3 +711,21 @@ ALTER TABLE stock_movements SET (
 -- ============================================================================
 -- END OF SCHEMA
 -- ============================================================================
+
+-- ============================================================================
+-- TENANT SEQUENCES (for invoice numbers, etc.)
+-- ============================================================================
+
+CREATE TABLE tenant_sequences (
+    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+    name VARCHAR(50) NOT NULL,
+    last_value BIGINT NOT NULL DEFAULT 0,
+
+    UNIQUE(tenant_id, name)
+);
+
+-- RLS
+ALTER TABLE tenant_sequences ENABLE ROW LEVEL SECURITY;
+CREATE POLICY tenant_isolation ON tenant_sequences FOR ALL TO PUBLIC
+    USING (tenant_id = current_tenant_id() OR is_superadmin());

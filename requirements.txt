@@ -17,7 +17,7 @@ hiredis==2.2.3
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
 python-multipart==0.0.18
-PyJWT==2.8.1
+PyJWT==2.8.0  # Pinned to 2.8.0 to resolve an installation error with 2.8.1
 
 # API Documentation
 python-multipart==0.0.18
@@ -44,3 +44,4 @@ isort==5.13.2
 
 # Production
 gunicorn==22.0.0
+aiosqlite
